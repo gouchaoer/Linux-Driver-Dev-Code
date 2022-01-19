@@ -1,0 +1,1 @@
+cmd_/home/baohua/develop/training/kernel/drivers/export/export_symb.ko := ld -r -m elf_i386 -T ./scripts/module-common.lds --build-id  -o /home/baohua/develop/training/kernel/drivers/export/export_symb.ko /home/baohua/develop/training/kernel/drivers/export/export_symb.o /home/baohua/develop/training/kernel/drivers/export/export_symb.mod.o

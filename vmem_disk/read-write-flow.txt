@@ -1,0 +1,166 @@
+IO Data Flow
+Read
+
+read(char __user *buf) @ http://lxr.linux.no/#linux+v3.7.10/fs/read_write.c#L453
+   call vfs_read(buf)
+
+vfs_read(char __user *buf) @ http://lxr.linux.no/#linux+v3.7.10/fs/read_write.c#L453
+   call do_sync_read(buf)
+
+do_sync_read(char __user *buf) @ http://lxr.linux.no/#linux+v3.7.10/fs/read_write.c#L331
+   Shallow copy into
+   struct iovec iov.iov_base
+   call generic_file_aio_read(iov)
+
+generic_file_aio_read(const struct iovec *iov) @ http://lxr.linux.no/#linux+v3.7.10/mm/filemap.c#L1386
+   if DIRECT
+      call ext3_direct_IO
+   if something left to read after DIRECT
+      for(buf: iov)
+         Shallow copy into
+         read_descriptor_t desc.arg.buf
+         call do_generic_file_read(desc)
+
+ext3_direct_IO @ http://lxr.linux.no/#linux+v3.7.10/fs/ext3/inode.c#L1858
+TODO: do
+
+do_generic_file_read(read_descriptor_t *desc) @ http://lxr.linux.no/#linux+v3.7.10/mm/filemap.c#L1081
+   for(struct page *page: pages) -- pages for the entire desc
+      if !(page is cached)
+         (indirectly) call read_pages(pages) -- readahead pages for the entire buffer(?)
+      call file_read_actor(desc, page)
+
+read_pages(pages) @ http://lxr.linux.no/#linux+v3.7.10/mm/readahead.c#L111
+   call mpage_readpages(pages) -- through ext3_readpages
+
+mpage_readpages(pages) @ http://lxr.linux.no/#linux+v3.7.10/fs/mpage.c#L366
+   struct bio *bio
+   for(page: pages) -- just a fold
+      bio = do_mpage_readpage(bio, page, ...)
+   call mpage_bio_submit(bio)
+
+-- TODO: Not sure if I understand it correctly
+do_mpage_readpage(struct bio *bio, struct page *page) @ http://lxr.linux.no/#linux+v3.7.10/fs/mpage.c#L155
+   -- Tries to smartly read a page from disk. But if
+   -- blocks are not contiguous it gets confused and reads bluntly.
+   unconfused:
+      call bio_add_page(bio, page)
+   confused:
+      call block_read_full_page(bio, page)
+
+bio_add_page(struct bio *bio, struct page *page) @ http://lxr.linux.no/#linux+v3.7.10/fs/bio.c#L647
+   -- Just increase the read length from previous bio state.
+   -- They call it merge here.
+
+block_read_full_page(struct bio *bio, struct page *page) @ http://lxr.linux.no/#linux+v3.7.10/fs/buffer.c#L2097
+   -- read(construct a bio really) all blocks for this page
+   -- using ext3_get_block
+
+ext3_get_block @ http://lxr.linux.no/#linux+v3.7.10/fs/ext3/inode.c#L1015
+TODO: Desperately try to find anything of interest here
+
+mpage_bio_submit(struct bio *bio) @ http://lxr.linux.no/#linux+v3.7.10/fs/mpage.c#L74
+   -- Nothing of interest really. We did all our optimisations
+   -- when creating this bio. Now it's all up to the driver.
+
+-- Deep copy from page to desc
+file_read_actor(read_descriptor_t *desc, struct page *page) @ http://lxr.linux.no/#linux+v3.7.10/mm/filemap.c#L1298
+   Tries to read from kmap_atomic(page).
+   If some data left reads from kmap(page)
+
+Write
+
+DATA_FLOW for WRITE(3.7.10, ext3)
+
+MACROS: SYSCALL_DEFINE3 @ linux/fs/read_write.c:467
+    -- gets file descriptor, ptr on buffer and numbers of bytes [fd,*buf,count]
+475: vfs_write @ linux/fs/read_write.c:413
+    -- gets struct file, position in file [*file, *buf,count,*pos]
+    || file has custom write f_op
+         428: file->f_op->write
+            -- [*file, *buf,count,*ppos]
+    || otherwise 
+         430: do_sync_write @ linux/fs/read_write.c:387
+            -- gets [*file, *buf,count,*ppos]
+            -- creates struct iovec from [*buf,count] @ linux/include/uapi/linux/uio.h:16 
+            -- create  struct kiocb for callback @ linux/include/linux/aio.h:87
+            393: init_sync_kiocb @  linux/include/linux/aio.h:134
+                -- gets [*file]                 
+                -- inits fields filp = [*file], tsk = current task_struct, 
+                   ki_key(id query) =  KIOCB_SYNC_KEY, ki_users = 1
+            -- assigns ki_pos = [*ppos], ki_left(remaining bytes) = [count], 
+                                kin_bytes (copy of iocb->aio_nbytes) = [count]
+            399: call aio_write operation  
+            -- EXT3: according to ext3/file.c generic_file_aio_write is used 
+                   generic_file_aio_write @ linux/mm/filemap.c:2521
+                -- gets [*kiocb, *iov, 1(number of segments in the vector) , *ppos]
+                2532: __generic_file_aio_write :2413
+                    -- gets [*kiocb, *iov, 1(nr_segs), *ppos]
+                    2426: generic_segment_checks :1347
+                        -- gets ocount - original count [*iov,&nr_segs(nr_segs=1),*ocount]
+                        -- check iovec and accumulate numbers of bytes for all segments in [ocount] 
+                            (our case nr_segs=1)
+                    -- assigns backing_dev_info of current task  from iocb->filp->f_mapping                                                           
+                    2437: generic_write_checks : 2076
+                        -- gets[*file,*ppos,*count, int  is_blocked]
+                        -- checks permission and  out of range position in file
+                            and corrects value [coun],that was initialized value of [ocount]
+                    -- update time and SUID
+                    || Direct disk access is required (O_DIRECT flag is set)
+                        2457: generic_file_direct_write : 2174
+                            -- gets [*kiocb,*iov, 1(nr_segs),*ppos,ocount, count, pos(=*ppos)]
+                            || count != ocount
+                                2186: iov_shorten @ linux/fs/read_write.c: 
+                                    -- gets [*iovec, *nr_segs, count]
+                                    --reduce iovec's length and return resulting number of segments
+                            ...
+                            -- call filemap_write_and_wait_range , direct_IO
+                                   and invalidate_inode_pages2_range
+                            TODO 
+                                  ...
+                    || Buffered write
+                        2501: generic_file_buffered_write: 2374
+                            -- gets [*kiocb,iovec, 1 (nr_segs), *ppos,pos, count, written]
+                            2382: iov_iter_init @ linux/include/linux/fs.h:305
+                                -- gets [*iovec,*iov_iter,nr_segs, count,written]
+                                -- create iovec iterator 
+                            2383: generic_preform_write:2282
+                                -- gets [*file, *iov_iter, pos]
+                                2324: a_ops->write_begin 
+                                    EXT3: @/linux/fs/ext3/inode.c : 2004        
+                                    -- gets [*file, *adress_space,pos, *page,...]
+                                    ext3_write_begin @ /linux/fs/ext3/inode.c:1245
+                                        -- gets [*file, *adress_space,pos, *page,...]
+                                        1267: grab_cach_page_write_begin 
+                                                @  /linux/mm/filemap.c: 2247
+                                            --gets [*adress_space, index,..]
+                                            -- create or find/writeback a page
+                                        1279: __block_write_begin @ linux/fs/buffer.c
+                                            -- gets [*page, pos, extr3_get_block) ]
+                                            -- create/update buffers and its heads 
+                                               for page use extr3_get_block
+                                            TODO: 
+                                            ...
+                                           indirect call:extr3_get_block @ linux/fs/ext3/inode.c:851
+                                                -- gets [*inode, iblock, *buffer_head, ..]
+                                                ...
+                                2333: iov_iter_copy_from_user_atomic :1952
+                                    -- gets [*page,*iov_iter,offset,bytes]
+                                    -- copy page from userspace to kernel into cache      
+                                -- call flush_dcache_page
+                                -- call mark_page_accesses to update info for LRU
+                                2338: call specific fs operation  a_ops->write_end
+                                EXT3: a_ops->write_end @ ext3/inode.c : 1974
+                                    ext3_ordered_write_end @ linux/fs/ext3/inode.c:1367
+                                        -- gets [*file, *address_space,pos, *page,...]
+                                        1378: block_write_end
+                                              ...
+                                            call __block_commit_write to set buffer dirty flag 
+                                --cond_resched()
+                                -- call balance_dirty_pages_ratelimited
+                                -- current->backing_dev_info = NULL 
+                              <-               
+                        -- call generic_write_sync to flush dirty buffers of current file 
+                          ...
+
+

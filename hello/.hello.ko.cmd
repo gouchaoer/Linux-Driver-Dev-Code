@@ -1,0 +1,1 @@
+cmd_/home/baohua/develop/training/kernel/drivers/hello/hello.ko := ld -r -m elf_i386 -T ./scripts/module-common.lds --build-id  -o /home/baohua/develop/training/kernel/drivers/hello/hello.ko /home/baohua/develop/training/kernel/drivers/hello/hello.o /home/baohua/develop/training/kernel/drivers/hello/hello.mod.o

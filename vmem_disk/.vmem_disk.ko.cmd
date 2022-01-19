@@ -1,0 +1,1 @@
+cmd_/home/baohua/develop/training/kernel/drivers/vmem_disk/vmem_disk.ko := ld -r -m elf_i386 -T ./scripts/module-common.lds --build-id  -o /home/baohua/develop/training/kernel/drivers/vmem_disk/vmem_disk.ko /home/baohua/develop/training/kernel/drivers/vmem_disk/vmem_disk.o /home/baohua/develop/training/kernel/drivers/vmem_disk/vmem_disk.mod.o
